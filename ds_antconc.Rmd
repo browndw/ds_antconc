@@ -1,8 +1,12 @@
 ---
 title: "ds_antconc"
-output: html_notebook
+output: html_document
 author: "David Brown"
 ---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
 This short notebook, will reformat DocuScope files identified as **-ubiq-tokens.csv** into .txt files that can be processed by AntConc.
 
@@ -21,7 +25,7 @@ library(data.table)
 
 Load in the yaml file countaing a taxonomy of DocuScope categories. This file is part of the repository, but you will need to set the path to the file.
 
-*IMPORTANT* This is for the ds_dict_en_2020.01.12.dat dictionary. If you have a different dictionary, you will need a different *.yml file.
+**IMPORTANT** This is for the ds_dict_en_2020.01.12.dat dictionary. If you have a different dictionary, you will need a different *.yml file.
 
 ```{r load_yml}
 dict <- read_yaml("/ds_categories_20-01.yml")
