@@ -1,0 +1,132 @@
+---
+title: "ds_antconc"
+output: html_notebook
+author: "David Brown"
+---
+
+This short notebook, will reformat DocuScope files identified as **-ubiq-tokens.csv** into .txt files that can be processed by AntConc.
+
+Loading the files into AntConc requires some specific settings. For those, refer to accompanying documentation linked in the README.md file.
+
+Before running the code on a large corpus, it might be useful to test it out on one file (or a small number of them). The code executes lookups in a list taxonomy. For a small corpus, it's reasonably efficient, but can take some time write out a large number of files.
+
+The tagging functions require the following libraries.
+
+```{r load_libs, include=FALSE}
+library(tidyverse)
+library(rlist)
+library(yaml)
+library(data.table)
+```
+
+Load in the yaml file countaing a taxonomy of DocuScope categories. This file is part of the repository, but you will need to set the path to the file.
+
+*IMPORTANT* This is for the ds_dict_en_2020.01.12.dat dictionary. If you have a different dictionary, you will need a different *.yml file.
+
+```{r load_yml}
+dict <- read_yaml("/ds_categories_20-01.yml")
+```
+
+One of DocuScope's outputs are individual .csv files that contain information about the structure of the texts you've tagged. These are what we'll use to build our reformatted texts that can be read by AntConc.
+
+For that, we need to generate a vector of those files with their complete paths. So here, you'll need to set the 'path' argument to point to that folder
+
+```{r file_list}
+files_list <- list.files(path="/token_csv", pattern="*.csv", full.names=TRUE, recursive=FALSE)
+```
+
+Finally, set a path to a target folder where you want the new *.txt to be written.
+
+Note: this path *MUST* end with a forward slash as it does in the example below.
+
+```{r set_target}
+target_folder <- "/mycorpus_tagged/"
+```
+
+Load 2 functions: get_clust and ds_tagger.
+
+```{r load_functs}
+get_clust <- function(i) {
+  if(is.na(i) == T | i == "UNRECOGNIZED") {
+    return(NA)
+  }
+  else{
+    sub_on <- paste0("^", toupper(str_sub(i, 1, 1)))
+  }
+  if(sub_on == "^Z") {
+    return(NA)
+  }
+  else{
+    new_list <- list.match(dict, sub_on)
+    name_match <- list.search(new_list, i %in% ., n=1) %>% names()
+  }
+  if(!is_empty(name_match)){
+    ds_name <- gsub("\\.\\S+$", "", name_match)
+    return(ds_name)
+  }
+  else{
+    name_match <- list.search(dict, i %in% ., n=1) %>% names()
+    ds_name <- gsub("\\.\\S+$", "", name_match)
+    return(ds_name)
+  }
+}
+
+ds_tagger <- function(x) {
+  #read in file
+  tokens_file <- readr::read_csv(x,  col_names = F)
+  
+  #create name and path for output
+  file_name <- basename(x)
+  
+  #change the file name suffix and extension
+  file_name <- gsub("-ubiq-tokens.csv", "_ds.txt", file_name, fixed = T)
+  output_file <- paste0(target_folder, file_name)
+  
+  #name columns
+  names(tokens_file) <- c("word", "token", "par_id", "dimension", "tag_idx")
+  
+  #create cluster column from the dimension names
+  tokens_file <- tokens_file %>% mutate(cluster = unlist(lapply(dimension, get_clust)))
+  
+  #create an index of paragraphs from the new line indicator
+  tokens_file$par_id[!grepl("^n", tokens_file$par_id)] <- NA
+  tokens_file$par_id[grepl("^n", tokens_file$par_id)] <- seq(1:  sum(grepl("^n", tokens_file$par_id)))
+  tokens_file <- tidyr::fill(tokens_file, par_id, .direction = "up")
+  
+  tokens_file$tag_idx[tokens_file$tag_idx > 0] <- NA
+  tokens_file$tag_idx[grepl("0", tokens_file$tag_idx)] <- seq(1:  sum(grepl("0", tokens_file$tag_idx)))
+  tokens_file <- tidyr::fill(tokens_file, tag_idx, .direction = "down")
+  tokens_file <- tokens_file %>% mutate(token_id = seq(1:nrow(tokens_file)))
+  
+  # collapse by cluster
+  token_collapse <- subset(tokens_file, !grepl("^[[:punct:]]$", tokens_file$token))
+  punct_collapse <- subset(tokens_file, grepl("^[[:punct:]]$", tokens_file$token))
+  punct_collapse <- punct_collapse %>% dplyr::select(tag_idx, token_id, par_id, token, cluster) %>%
+    rename(txt = token) %>% mutate(cluster = NA) %>% mutate(tagged = txt)
+  data.table::setDT(token_collapse)
+  token_collapse <- token_collapse[, list(token_id = max(token_id), par_id = unique(par_id), txt=paste(word, collapse='_'), cluster = unique(cluster)) , by = "tag_idx"]
+  
+  # add _ds suffix for AntConc
+  token_collapse <- token_collapse %>% mutate(cluster = ifelse(!is.na(cluster), paste0(cluster, "_ds"), NA))
+  data.table::setDT(token_collapse)
+  token_collapse$tagged <- apply(token_collapse[,4:5], 1, function(x) paste(x[!is.na(x)], collapse = "$"))
+  
+   # add tag for untagged tokens
+  token_collapse <- token_collapse %>% mutate(cluster = ifelse(is.na(cluster), "Untagged_ds", cluster))
+  token_collapse <- token_collapse %>% mutate(tagged = ifelse(cluster == "Untagged_ds", paste0(token_collapse$tagged, "$Untagged_ds"), tagged))
+ 
+  token_collapse <- bind_rows(token_collapse, punct_collapse) %>% arrange(token_id)
+  data.table::setDT(token_collapse)
+  token_collapse <- token_collapse[, list(txt=paste(tagged, collapse=' ')) , by = "par_id"]
+  token_collapse$par_id <- NULL
+  
+  write.table(token_collapse, output_file, quote = F, row.names = F, col.names = F)
+}
+```
+
+Finally, we'll simply apply the ds_tagger function to our files_list.
+
+```{r tag_texts}
+lapply(files_list, ds_tagger)
+```
+
