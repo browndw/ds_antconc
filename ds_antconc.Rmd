@@ -4,10 +4,6 @@ output: html_document
 author: "David Brown"
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
 This short notebook, will reformat DocuScope files identified as **-ubiq-tokens.csv** into .txt files that can be processed by AntConc.
 
 Loading the files into AntConc requires some specific settings. For those, refer to accompanying documentation linked in the README.md file.
@@ -103,8 +99,8 @@ ds_tagger <- function(x) {
   tokens_file <- tokens_file %>% mutate(token_id = seq(1:nrow(tokens_file)))
   
   # collapse by cluster
-  token_collapse <- subset(tokens_file, !grepl("^[[:punct:]]$", tokens_file$token))
-  punct_collapse <- subset(tokens_file, grepl("^[[:punct:]]$", tokens_file$token))
+  token_collapse <- subset(tokens_file, !grepl("^[[:punct:]]+$", tokens_file$token))
+  punct_collapse <- subset(tokens_file, grepl("^[[:punct:]]+$", tokens_file$token))
   punct_collapse <- punct_collapse %>% dplyr::select(tag_idx, token_id, par_id, token, cluster) %>%
     rename(txt = token) %>% mutate(cluster = NA) %>% mutate(tagged = txt)
   data.table::setDT(token_collapse)
