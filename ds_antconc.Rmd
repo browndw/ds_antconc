@@ -43,34 +43,9 @@ Note: this path *MUST* end with a forward slash as it does in the example below.
 target_folder <- "/mycorpus_tagged/"
 ```
 
-Load 2 functions: get_clust and ds_tagger.
+Load the function: ds_tagger.
 
 ```{r load_functs}
-get_clust <- function(i) {
-  if(is.na(i) == T | i == "UNRECOGNIZED") {
-    return(NA)
-  }
-  else{
-    sub_on <- paste0("^", toupper(str_sub(i, 1, 1)))
-  }
-  if(sub_on == "^Z") {
-    return(NA)
-  }
-  else{
-    new_list <- list.match(dict, sub_on)
-    name_match <- list.search(new_list, i %in% ., n=1) %>% names()
-  }
-  if(!is_empty(name_match)){
-    ds_name <- gsub("\\.\\S+$", "", name_match)
-    return(ds_name)
-  }
-  else{
-    name_match <- list.search(dict, i %in% ., n=1) %>% names()
-    ds_name <- gsub("\\.\\S+$", "", name_match)
-    return(ds_name)
-  }
-}
-
 ds_tagger <- function(x) {
   #read in file
   tokens_file <- readr::read_csv(x,  col_names = F)
@@ -78,29 +53,45 @@ ds_tagger <- function(x) {
   #create name and path for output
   file_name <- basename(x)
   
-  #change the file name suffix and extension
-  file_name <- gsub("-ubiq-tokens.csv", "_ds.txt", file_name, fixed = T)
+  # MICSUP
+  file_name <- gsub("(\\w{3})(\\w\\d)(\\d{3})-ubiq-tokens.csv", "\\1.\\2.\\3_ds.txt", file_name)
+  
+  # COCA
+  #file_name <- gsub("(\\D+)(\\d{4})(\\d+)-ubiq-tokens.csv", "\\1_\\2_\\3_ds.txt", file_name)
+  
+  #file_name <- gsub("(cellphones)(\\w{4})(\\d{3})-ubiq-tokens.csv", "\\1_\\2_\\3_ds.txt", file_name)
+  #file_name <- gsub("(\\d{4})([A-Z]+)([CO])(\\d{4})-ubiq-tokens.csv", "\\1_\\2_\\3_\\4_ds.txt", file_name)
+  #file_name <- gsub("(\\d{3})(\\w+)(\\w{6})-ubiq-tokens.csv", "\\1_\\2_\\3_ds.txt", file_name)
   output_file <- paste0(target_folder, file_name)
   
   #name columns
   names(tokens_file) <- c("word", "token", "par_id", "dimension", "tag_idx")
   
   #create cluster column from the dimension names
-  tokens_file <- tokens_file %>% mutate(cluster = unlist(lapply(dimension, get_clust)))
+  tokens_file <- tokens_file %>% mutate(cluster = dict$ind[match(tokens_file$dimension, dict$values)])
+  tokens_file$cluster <- as.character(tokens_file$cluster)
   
   #create an index of paragraphs from the new line indicator
   tokens_file$par_id[!grepl("^n", tokens_file$par_id)] <- NA
   tokens_file$par_id[grepl("^n", tokens_file$par_id)] <- seq(1:  sum(grepl("^n", tokens_file$par_id)))
   tokens_file <- tidyr::fill(tokens_file, par_id, .direction = "up")
+  tokens_file$par_id <- as.integer(tokens_file$par_id)
   
   tokens_file$tag_idx[tokens_file$tag_idx > 0] <- NA
   tokens_file$tag_idx[grepl("0", tokens_file$tag_idx)] <- seq(1:  sum(grepl("0", tokens_file$tag_idx)))
   tokens_file <- tidyr::fill(tokens_file, tag_idx, .direction = "down")
   tokens_file <- tokens_file %>% mutate(token_id = seq(1:nrow(tokens_file)))
+  tokens_file <- tokens_file %>% mutate(cluster = na_if(cluster, "Orphaned"))
+  
+  #don't allow tags to span paragraphs
+  tokens_file <- tokens_file %>% mutate(cluster = ifelse(lead(tag_idx) == tag_idx & lead(par_id) != par_id, NA, cluster))
   
   # collapse by cluster
-  token_collapse <- subset(tokens_file, !grepl("^[[:punct:]]+$", tokens_file$token))
-  punct_collapse <- subset(tokens_file, grepl("^[[:punct:]]+$", tokens_file$token))
+  token_collapse <- tokens_file %>% filter(!grepl("^[[:punct:]]+$", token) | !is.na(cluster))
+  punct_collapse <- tokens_file %>% filter(grepl("^[[:punct:]]+$", token) & is.na(cluster))
+  
+  #token_collapse <- subset(tokens_file, !grepl("^[[:punct:]]+$", tokens_file$token))
+  #punct_collapse <- subset(tokens_file, grepl("^[[:punct:]]+$", tokens_file$token))
   punct_collapse <- punct_collapse %>% dplyr::select(tag_idx, token_id, par_id, token, cluster) %>%
     rename(txt = token) %>% mutate(cluster = NA) %>% mutate(tagged = txt)
   data.table::setDT(token_collapse)
@@ -111,17 +102,23 @@ ds_tagger <- function(x) {
   data.table::setDT(token_collapse)
   token_collapse$tagged <- apply(token_collapse[,4:5], 1, function(x) paste(x[!is.na(x)], collapse = "$"))
   
-   # add tag for untagged tokens
+  # add tag for untagged tokens
   token_collapse <- token_collapse %>% mutate(cluster = ifelse(is.na(cluster), "Untagged_ds", cluster))
   token_collapse <- token_collapse %>% mutate(tagged = ifelse(cluster == "Untagged_ds", paste0(token_collapse$tagged, "$Untagged_ds"), tagged))
- 
+  
+  #ensure no duplicate token ids
+  token_collapse <- token_collapse %>% group_by(token_id) %>% slice(1)
+  
   token_collapse <- bind_rows(token_collapse, punct_collapse) %>% arrange(token_id)
+  token_collapse <- token_collapse %>% mutate(par_id = as.integer(par_id))
+  
   data.table::setDT(token_collapse)
   token_collapse <- token_collapse[, list(txt=paste(tagged, collapse=' ')) , by = "par_id"]
   token_collapse$par_id <- NULL
   
   write.table(token_collapse, output_file, quote = F, row.names = F, col.names = F)
 }
+
 ```
 
 Finally, we'll simply apply the ds_tagger function to our files_list.
