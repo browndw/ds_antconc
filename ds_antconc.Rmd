@@ -14,7 +14,6 @@ The tagging functions require the following libraries.
 
 ```{r load_libs, include=FALSE}
 library(tidyverse)
-library(rlist)
 library(yaml)
 library(data.table)
 ```
@@ -25,6 +24,7 @@ Load in the yaml file countaing a taxonomy of DocuScope categories. This file is
 
 ```{r load_yml}
 dict <- read_yaml("/ds_categories_20-01.yml")
+dict <- dict %>% flatten_dictionary() %>% stack() %>% data.frame(stringsAsFactors = F)
 ```
 
 One of DocuScope's outputs are individual .csv files that contain information about the structure of the texts you've tagged. These are what we'll use to build our reformatted texts that can be read by AntConc.
